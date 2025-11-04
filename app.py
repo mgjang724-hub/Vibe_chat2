@@ -13,8 +13,10 @@ def _ensure_session_keys():
         st.session_state.corpus_text = ""
     if "is_admin" not in st.session_state:
         st.session_state.is_admin = False
+    if "last_result" not in st.session_state:
+        st.session_state.last_result = None
 
-_ensure_session_keys()  # <- 페이지 설정 직후, 어떤 UI 렌더 이전
+_ensure_session_keys()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
 MODEL = os.getenv("OPENAI_MODEL") or st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -73,7 +75,7 @@ def _read_file_to_text(upload) -> str:
 
 def _call_openai(system: str, user: str) -> str | None:
     if not client:
-        st.error("OPENAI_API_KEY 미설정. Secrets 또는 환경변수에 키를 넣어야 함.")
+        st.error("OPENAI_API_KEY 미설정.")
         return None
     try:
         with st.spinner("LLM 호출 중"):
@@ -84,7 +86,7 @@ def _call_openai(system: str, user: str) -> str | None:
                     {"role":"system","content":system},
                     {"role":"user","content":user}
                 ],
-                timeout=60,  # 네트워크 지연 보호
+                timeout=60,
             )
         content = resp.choices[0].message.content
         if not content:
@@ -97,7 +99,6 @@ def _call_openai(system: str, user: str) -> str | None:
 
 # ================== 관리자 포털 노출 조건 ==================
 def _is_admin_link() -> bool:
-    # 안전: 항상 experimental_get_query_params 사용
     try:
         qp = st.experimental_get_query_params() or {}
     except Exception:
@@ -110,48 +111,64 @@ def _is_admin_link() -> bool:
         token = token_param
     return bool(ADMIN_LINK_TOKEN and token and token == ADMIN_LINK_TOKEN)
 
-
-def _ensure_session_keys():
-    if "corpus_text" not in st.session_state:
-        st.session_state.corpus_text = ""  # 관리자 업로드로 채워짐
-    if "is_admin" not in st.session_state:
-        st.session_state.is_admin = False
-
-_ensure_session_keys()
-
-# ================== 헤더(UI 최소화) ==================
+# ================== 스타일 ==================
 st.markdown(
     """
     <style>
-      /* 사이드바 기본 텍스트 정리 */
-      section[data-testid="stSidebar"] .stMarkdown, 
-      section[data-testid="stSidebar"] .stCaption { font-size: 0.92rem; }
-      /* 버튼 간격 */
       .stButton>button { width:100%; }
     </style>
     """, unsafe_allow_html=True
 )
 
-st.title("바이브코딩 Apps Script 튜터")
-st.caption("입력: 제목·설명, 주 사용자, 구현 기능 → 출력: Apps Script 가능성, 보완 제안, 블루프린트, 예시 코드, PRD")
+# ================== 상수 프롬프트(SYSTEM) ==================
+SYSTEM = """역할: 당신은 'Google Apps Script 설계 조언가'다.
+목표:
+- 입력된 아이디어를 Apps Script 중심으로 재설계한다.
+- 불가능/부적합 요소는 대체 경로로 수정·보완한다.
+- 결과는 JSON 한 개만 출력한다. 한국어로 간결하고 구조화한다.
+출력 JSON 스키마:
+{
+  "feasibility": {"score": 0~1, "summary": "한 줄 요약"},
+  "adjustments": ["보완/범위 조정 제안…"],
+  "blueprint": {
+    "data_schema": [{"sheet":"이름","columns":["A","B","..."]}],
+    "services": ["Sheets","Drive","UrlFetchApp"],
+    "scopes": ["https://..."],
+    "endpoints": [{"path":"/hook","method":"POST","fields":["..."]}],
+    "triggers": [{"type":"time","every":"day 09:00"}],
+    "kpis": ["예: 전송 성공률 99%","다운로드→사용률 30%+"]
+  },
+  "gas_snippets": [{"title":"핵심","code":"```js\\nfunction doPost(e){/*...*/}\\n```"}],
+  "risks": ["quota","auth","pii"],
+  "prd": "마크다운 PRD 본문",
+  "next_steps": ["1.","2.","3."]
+}
+지침:
+- Sheets 테이블 구조는 열 이름을 명시한다.
+- WebApp(doGet/doPost)와 트리거가 필요하면 구체적으로 제안한다.
+- 예시 Apps Script 코드는 60줄 내 핵심만 제시한다.
+- 개인정보/권한/쿼터 리스크를 명시한다.
+- 제공된 '지식'이 있으면 우선 반영하되, 없으면 일반 지식으로 추론하고 '추정'임을 표시한다.
+"""
 
-# ================== 일반 사용자용 사이드바(상태만 표시) ==================
+# ================== 헤더 ==================
+st.title("바이브코딩 Apps Script 튜터")
 with st.sidebar:
     st.subheader("상태")
     st.write(f"LLM: `{MODEL}`")
-    st.write("버전: 1.2")
-    # 관리자 포털은 노출하지 않음
+    st.write("API 키 감지:", "예" if OPENAI_API_KEY else "아니오")
+    st.write("자산 길이:", len(st.session_state.corpus_text))
 
-# ================== 메인: 사용자 UX ==================
-# 상단 도움말 컴팩트
+st.caption("입력: 제목·설명, 주 사용자, 구현 기능 → 출력: Apps Script 가능성, 보완 제안, 블루프린트, 예시 코드, PRD")
+
+# ================== 사용자 폼 ==================
 with st.expander("사용 방법", expanded=False):
     st.markdown(
-        "- 1) 제목과 설명, 주 사용자, 기능을 입력한다.\n"
-        "- 2) 버튼을 누르면 Apps Script로 구현 가능한 형태로 재설계와 PRD를 생성한다.\n"
-        "- 3) 블루프린트 JSON과 PRD를 저장해 구현에 활용한다."
+        "- 1) 제목·설명, 주 사용자, 기능을 입력.\n"
+        "- 2) 버튼 클릭 시 GAS 가능성 평가 + PRD 자동 생성.\n"
+        "- 3) 블루프린트와 PRD를 다운로드."
     )
 
-# 입력 카드
 with st.form("idea_form", clear_on_submit=False):
     st.markdown("#### 아이디어 입력")
     c1, c2 = st.columns([2,1])
@@ -173,12 +190,10 @@ with st.form("idea_form", clear_on_submit=False):
         do_reset = st.form_submit_button("입력 초기화", use_container_width=True)
 
 if do_reset:
-    st.session_state.pop("last_result", None)
+    st.session_state.last_result = None
     st.rerun()
 
-# 결과 탭
 if do_generate:
-    # 필수값 검증
     if not title or not users or not (desc or features):
         st.warning("제목, 주 사용자, 설명/기능 중 최소 한 항목은 채워야 합니다.")
         st.stop()
@@ -190,8 +205,8 @@ if do_generate:
         st.write("1/3 규칙 기반 1차 판정")
         st.write(rc)
 
-        st.write("2/3 LLM 요청 생성")
-        raw = _call_openai(SYSTEM, user_prompt := f"""
+        st.write("2/3 LLM 요청 전송")
+        user_prompt = f"""
 [아이디어]
 {idea_block}
 
@@ -220,8 +235,8 @@ if do_generate:
 [지식(업로드 자산 스냅샷)]
 {(st.session_state.corpus_text[:8000] if st.session_state.corpus_text else "(지식 없음)")}
 JSON만 출력하라.
-""")
-
+"""
+        raw = _call_openai(SYSTEM, user_prompt)
         if raw is None:
             status.update(state="error", label="LLM 호출 실패")
             st.stop()
@@ -230,29 +245,68 @@ JSON만 출력하라.
         try:
             data = json.loads(raw)
         except Exception:
-            import re
             m = re.search(r"\{[\s\S]*\}", raw)
             if m:
                 data = json.loads(m.group(0))
             else:
-                st.error("JSON 파싱 실패. 원문을 아래에 표시합니다.")
+                st.error("JSON 파싱 실패. 원문 표시:")
                 st.code(raw)
                 status.update(state="error", label="파싱 실패")
                 st.stop()
 
         status.update(state="complete", label="완료")
 
-    # 결과 렌더
-    st.session_state["last_result"] = data
-    # 이하 기존 렌더링 코드 그대로…
+    st.session_state.last_result = data
 
+# ================== 결과 렌더링 ==================
+data = st.session_state.last_result
+if data:
+    t1, t2, t3 = st.tabs(["요약", "설계·코드", "PRD"])
+
+    with t1:
+        colA, colB = st.columns([1,1])
+        with colA:
+            score = float(data.get("feasibility", {}).get("score", 0.0))
+            st.metric("Apps Script 가능성", f"{score:.2f}")
+        with colB:
+            st.write(data.get("feasibility", {}).get("summary",""))
+
+        st.markdown("**보완·범위 조정 제안**")
+        for it in data.get("adjustments", []):
+            st.write("• " + it)
+
+    with t2:
+        st.markdown("#### 설계 블루프린트(JSON)")
+        blueprint = data.get("blueprint", {})
+        st.json(blueprint)
+        st.download_button(
+            "블루프린트 JSON 다운로드",
+            json.dumps(blueprint, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name="blueprint.json"
+        )
+
+        st.markdown("#### 예시 Apps Script 스니펫")
+        for sn in data.get("gas_snippets", []):
+            code = sn.get("code","").replace("```js","").replace("```javascript","").replace("```","")
+            st.markdown(f"**{sn.get('title','스니펫')}**")
+            st.code(code, language="javascript")
+
+        st.markdown("#### 리스크")
+        st.write(data.get("risks", []))
+
+    with t3:
+        prd_md = data.get("prd","")
+        if prd_md:
+            st.markdown("#### PRD 초안")
+            st.markdown(prd_md)
+            st.download_button("PRD.md 다운로드", prd_md.encode("utf-8"), file_name="PRD.md")
+        else:
+            st.info("PRD 생성 결과가 비어 있습니다.")
 
 # ================== 관리자 포털 ==================
-# 일반 사용자에게는 전혀 노출하지 않음. admin 링크 파라미터가 맞을 때만 등장.
 if _is_admin_link():
     st.markdown("---")
     st.markdown("##### 관리자 포털")
-    # 로그인 상태 여부
     if not st.session_state.is_admin:
         with st.form("admin_login"):
             pwd = st.text_input("관리자 비밀번호", type="password")
@@ -266,7 +320,7 @@ if _is_admin_link():
                     st.error("인증 실패")
     else:
         st.success("관리자 모드")
-        st.caption("연수 원고·레퍼런스 자산을 업로드하면 답변 품질이 향상됩니다.")
+        st.caption("연수 원고·레퍼런스 자산 업로드")
         uploads = st.file_uploader("PDF/TXT/MD 업로드", type=["pdf","txt","md"], accept_multiple_files=True)
         if uploads:
             texts = []

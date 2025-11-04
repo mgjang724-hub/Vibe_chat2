@@ -84,14 +84,20 @@ def _call_openai(system: str, user: str) -> str:
 
 # ================== 관리자 포털 노출 조건 ==================
 def _is_admin_link() -> bool:
-    # Streamlit 1.39: query params API
-   try:
+    # 안전: 항상 experimental_get_query_params 사용
+    try:
         qp = st.experimental_get_query_params() or {}
     except Exception:
         qp = {}
     token_param = qp.get("admin")
-    token = token_param[0] if isinstance(token_param, list) and token_param else (token_param or "")
+    token = ""
+    if isinstance(token_param, list) and token_param:
+        token = token_param[0]
+    elif isinstance(token_param, str):
+        token = token_param
     return bool(ADMIN_LINK_TOKEN and token and token == ADMIN_LINK_TOKEN)
+
+
 def _ensure_session_keys():
     if "corpus_text" not in st.session_state:
         st.session_state.corpus_text = ""  # 관리자 업로드로 채워짐

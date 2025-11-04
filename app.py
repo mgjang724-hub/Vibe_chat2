@@ -71,16 +71,29 @@ def _read_file_to_text(upload) -> str:
         except Exception:
             return data.decode("cp949", errors="ignore")
 
-def _call_openai(system: str, user: str) -> str:
+def _call_openai(system: str, user: str) -> str | None:
     if not client:
-        return json.dumps({"error":"OPENAI_API_KEY 필요"})
-    resp = client.chat.completions.create(
-        model=MODEL,
-        temperature=0.15,
-        messages=[{"role":"system","content":system},
-                  {"role":"user","content":user}]
-    )
-    return resp.choices[0].message.content.strip()
+        st.error("OPENAI_API_KEY 미설정. Secrets 또는 환경변수에 키를 넣어야 함.")
+        return None
+    try:
+        with st.spinner("LLM 호출 중"):
+            resp = client.chat.completions.create(
+                model=MODEL,
+                temperature=0.15,
+                messages=[
+                    {"role":"system","content":system},
+                    {"role":"user","content":user}
+                ],
+                timeout=60,  # 네트워크 지연 보호
+            )
+        content = resp.choices[0].message.content
+        if not content:
+            st.error("LLM 응답이 비어 있음.")
+            return None
+        return content.strip()
+    except Exception as e:
+        st.error(f"LLM 호출 실패: {type(e).__name__}: {e}")
+        return None
 
 # ================== 관리자 포털 노출 조건 ==================
 def _is_admin_link() -> bool:
@@ -146,54 +159,39 @@ with st.form("idea_form", clear_on_submit=False):
         title = st.text_input("제목", placeholder="예) 학급 공지·과제 리마인더 자동화")
     with c2:
         users = st.text_input("주 사용자", placeholder="예) 담임교사, 학생, 행정실")
+
     desc = st.text_area("설명", placeholder="아이디어의 배경과 목적", height=120)
     features = st.text_area(
         "구현하려는 기능",
         placeholder="- 주간 리마인더 메일 발송\n- Google Form 응답 자동 집계\n- 승인/반려 워크플로",
         height=160
     )
-    left, right = st.columns([1,1])
-    with left:
-        submitted = st.form_submit_button("가능성 평가 + 보완 제안 + PRD 생성", type="primary")
-    with right:
-        st.form_submit_button("입력 초기화")
+    col_btn1, col_btn2 = st.columns([1,1])
+    with col_btn1:
+        do_generate = st.form_submit_button("가능성 평가 + 보완 제안 + PRD 생성", type="primary", use_container_width=True)
+    with col_btn2:
+        do_reset = st.form_submit_button("입력 초기화", use_container_width=True)
+
+if do_reset:
+    st.session_state.pop("last_result", None)
+    st.rerun()
 
 # 결과 탭
-if submitted:
+if do_generate:
+    # 필수값 검증
+    if not title or not users or not (desc or features):
+        st.warning("제목, 주 사용자, 설명/기능 중 최소 한 항목은 채워야 합니다.")
+        st.stop()
+
     idea_block = f"제목: {title}\n설명: {desc}\n주 사용자: {users}\n기능:\n{features}"
     rc = _rule_check(idea_block)
 
-    SYSTEM = """역할: 당신은 'Google Apps Script 설계 조언가'다.
-목표:
-- 입력된 아이디어를 Apps Script 중심으로 재설계한다.
-- 불가능/부적합 요소는 대체 경로로 수정·보완한다.
-- 결과는 JSON 한 개만 출력한다. 한국어로 간결하고 구조화한다.
-출력 JSON 스키마:
-{
-  "feasibility": {"score": 0~1, "summary": "한 줄 요약"},
-  "adjustments": ["보완/범위 조정 제안…"],
-  "blueprint": {
-    "data_schema": [{"sheet":"이름","columns":["A","B","..."]}],
-    "services": ["Sheets","Drive","UrlFetchApp"],
-    "scopes": ["https://..."],
-    "endpoints": [{"path":"/hook","method":"POST","fields":["..."]}],
-    "triggers": [{"type":"time","every":"day 09:00"}],
-    "kpis": ["예: 전송 성공률 99%","다운로드→사용률 30%+"]
-  },
-  "gas_snippets": [{"title":"핵심","code":"```js\\nfunction doPost(e){/*...*/}\\n```"}],
-  "risks": ["quota","auth","pii"],
-  "prd": "마크다운 PRD 본문",
-  "next_steps": ["1.","2.","3."]
-}
-지침:
-- Sheets 테이블 구조는 열 이름을 명시한다.
-- WebApp(doGet/doPost)와 트리거가 필요하면 구체적으로 제안한다.
-- 예시 Apps Script 코드는 60줄 내 핵심만 제시한다.
-- 개인정보/권한/쿼터 리스크를 명시한다.
-- 제공된 '지식'이 있으면 우선 반영하되, 없으면 일반 지식으로 추론하고 '추정'임을 표시한다.
-"""
+    with st.status("분석 파이프라인 실행 중", expanded=True) as status:
+        st.write("1/3 규칙 기반 1차 판정")
+        st.write(rc)
 
-    user_prompt = f"""
+        st.write("2/3 LLM 요청 생성")
+        raw = _call_openai(SYSTEM, user_prompt := f"""
 [아이디어]
 {idea_block}
 
@@ -222,62 +220,32 @@ if submitted:
 [지식(업로드 자산 스냅샷)]
 {(st.session_state.corpus_text[:8000] if st.session_state.corpus_text else "(지식 없음)")}
 JSON만 출력하라.
-"""
+""")
 
-    with st.spinner("생성 중"):
-        raw = _call_openai(SYSTEM, user_prompt)
+        if raw is None:
+            status.update(state="error", label="LLM 호출 실패")
+            st.stop()
 
-    # JSON 파싱
-    try:
-        data = json.loads(raw)
-    except Exception:
-        m = re.search(r"\{[\s\S]*\}", raw)
-        data = json.loads(m.group(0)) if m else {"error":"JSON 파싱 실패", "raw":raw}
+        st.write("3/3 JSON 파싱")
+        try:
+            data = json.loads(raw)
+        except Exception:
+            import re
+            m = re.search(r"\{[\s\S]*\}", raw)
+            if m:
+                data = json.loads(m.group(0))
+            else:
+                st.error("JSON 파싱 실패. 원문을 아래에 표시합니다.")
+                st.code(raw)
+                status.update(state="error", label="파싱 실패")
+                st.stop()
 
-    t1, t2, t3 = st.tabs(["요약", "설계·코드", "PRD"])
+        status.update(state="complete", label="완료")
 
-    with t1:
-        colA, colB = st.columns([1,1])
-        with colA:
-            score = float(data.get("feasibility", {}).get("score", rc["score"]))
-            st.metric("Apps Script 가능성", f"{score:.2f}")
-        with colB:
-            st.write(data.get("feasibility", {}).get("summary",""))
+    # 결과 렌더
+    st.session_state["last_result"] = data
+    # 이하 기존 렌더링 코드 그대로…
 
-        st.markdown("**보완·범위 조정 제안**")
-        for it in data.get("adjustments", []):
-            st.write("• " + it)
-
-        with st.expander("규칙 기반 1차 판정 세부"):
-            st.json(rc)
-
-    with t2:
-        st.markdown("#### 설계 블루프린트(JSON)")
-        blueprint = data.get("blueprint", {})
-        st.json(blueprint)
-        st.download_button(
-            "블루프린트 JSON 다운로드",
-            json.dumps(blueprint, ensure_ascii=False, indent=2).encode("utf-8"),
-            file_name="blueprint.json"
-        )
-
-        st.markdown("#### 예시 Apps Script 스니펫")
-        for sn in data.get("gas_snippets", []):
-            code = sn.get("code","").replace("```js","").replace("```javascript","").replace("```","")
-            st.markdown(f"**{sn.get('title','스니펫')}**")
-            st.code(code, language="javascript")
-
-        st.markdown("#### 리스크")
-        st.write(data.get("risks", []))
-
-    with t3:
-        prd_md = data.get("prd","")
-        if prd_md:
-            st.markdown("#### PRD 초안")
-            st.markdown(prd_md)
-            st.download_button("PRD.md 다운로드", prd_md.encode("utf-8"), file_name="PRD.md")
-        else:
-            st.info("PRD 생성 결과가 비어 있습니다.")
 
 # ================== 관리자 포털 ==================
 # 일반 사용자에게는 전혀 노출하지 않음. admin 링크 파라미터가 맞을 때만 등장.

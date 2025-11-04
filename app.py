@@ -5,12 +5,13 @@ from typing import Dict, Any, List
 import streamlit as st
 from openai import OpenAI
 
-# ========== 기본 설정 ==========
-st.set_page_config(page_title="바이브코딩 GAS 튜터", page_icon="🧩", layout="wide")
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# --- 기존 삭제:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")  # Streamlit Cloud Secrets에 저장
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if OPENAI_API_KEY:
+    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY  # 라이브러리가 자동 인식
+    client = OpenAI()  # 인자 없이 생성
+else:
+    client = None
 
 # ========== 간단 유틸 ==========
 def _sha256(s: str) -> str:

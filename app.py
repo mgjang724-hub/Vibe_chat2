@@ -99,17 +99,21 @@ def _call_openai(system: str, user: str) -> str | None:
 
 # ================== 관리자 포털 노출 조건 ==================
 def _is_admin_link() -> bool:
+    """관리자 전용 링크인지 판별"""
     try:
-        qp = st.experimental_get_query_params() or {}
+        qp = st.query_params or {}   # 최신 API
     except Exception:
         qp = {}
-    token_param = qp.get("admin")
     token = ""
-    if isinstance(token_param, list) and token_param:
-        token = token_param[0]
-    elif isinstance(token_param, str):
-        token = token_param
+    if isinstance(qp, dict):
+        # st.query_params 가 dict 형태를 반환
+        token_value = qp.get("admin")
+        if isinstance(token_value, list) and token_value:
+            token = token_value[0]
+        elif isinstance(token_value, str):
+            token = token_value
     return bool(ADMIN_LINK_TOKEN and token and token == ADMIN_LINK_TOKEN)
+
 
 # ================== 스타일 ==================
 st.markdown(

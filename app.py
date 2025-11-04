@@ -8,6 +8,14 @@ from openai import OpenAI
 # ================== 전역 설정 및 LLM 초기화 ==================
 st.set_page_config(page_title="바이브코딩 GAS 튜터", page_icon="🧩", layout="wide")
 
+def _ensure_session_keys():
+    if "corpus_text" not in st.session_state:
+        st.session_state.corpus_text = ""
+    if "is_admin" not in st.session_state:
+        st.session_state.is_admin = False
+
+_ensure_session_keys()  # <- 페이지 설정 직후, 어떤 UI 렌더 이전
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
 MODEL = os.getenv("OPENAI_MODEL") or st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -77,17 +85,13 @@ def _call_openai(system: str, user: str) -> str:
 # ================== 관리자 포털 노출 조건 ==================
 def _is_admin_link() -> bool:
     # Streamlit 1.39: query params API
-    try:
-        qp = st.query_params  # 최신
+   try:
+        qp = st.experimental_get_query_params() or {}
     except Exception:
-        qp = st.experimental_get_query_params()  # 구버전 호환
-    token = ""
-    if isinstance(qp, dict):
-        token = qp.get("admin", [""])[0] if isinstance(qp.get("admin"), list) else qp.get("admin", "")
-    else:
-        token = ""
+        qp = {}
+    token_param = qp.get("admin")
+    token = token_param[0] if isinstance(token_param, list) and token_param else (token_param or "")
     return bool(ADMIN_LINK_TOKEN and token and token == ADMIN_LINK_TOKEN)
-
 def _ensure_session_keys():
     if "corpus_text" not in st.session_state:
         st.session_state.corpus_text = ""  # 관리자 업로드로 채워짐

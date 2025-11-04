@@ -1,19 +1,26 @@
-import os, io, re, json, hashlib, base64, time
+import os, io, re, json, hashlib
 from datetime import datetime
 from typing import Dict, Any, List
 
 import streamlit as st
 from openai import OpenAI
 
-# --- 기존 삭제:
+# ================== 전역 설정 및 LLM 초기화 ==================
+st.set_page_config(page_title="바이브코딩 GAS 튜터", page_icon="🧩", layout="wide")
+
+# 반드시 먼저 정의
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
+MODEL = os.getenv("OPENAI_MODEL") or st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
+
+# OpenAI 안전 초기화
 if OPENAI_API_KEY:
-    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY  # 라이브러리가 자동 인식
+    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
     client = OpenAI()  # 인자 없이 생성
 else:
     client = None
 
-# ========== 간단 유틸 ==========
+# ================== 유틸 ==================
 def _sha256(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -86,12 +93,13 @@ def call_openai(system: str, user: str) -> str:
     )
     return resp.choices[0].message.content.strip()
 
-# ========== 사이드바: 관리자 영역(학습/업데이트) ==========
+# ================== UI 헤더 ==================
 st.title("바이브코딩 Apps Script 튜터")
 st.caption("입력: 제목·설명, 주 사용자, 구현 기능 → 출력: Apps Script 가능성 판단, 보완 제안, 블루프린트, 예시 코드, PRD")
 
 admin_gate_ui()
 
+# ================== 사이드바(관리자만 학습 업데이트) ==================
 with st.sidebar:
     st.header("지식(연수 원고·레퍼런스)")
     if "corpus_text" not in st.session_state:
@@ -109,12 +117,13 @@ with st.sidebar:
             st.warning("지식 초기화 완료")
     else:
         st.caption("관리자만 지식을 업데이트할 수 있습니다.")
+
     st.divider()
     st.subheader("상태")
     st.write(f"LLM 모델: `{MODEL}`")
     st.write("지식 길이:", len(st.session_state.corpus_text))
 
-# ========== 사용자 입력 ==========
+# ================== 사용자 입력 폼 ==================
 with st.form("idea_form"):
     col1, col2 = st.columns([2,1])
     with col1:
@@ -126,7 +135,7 @@ with st.form("idea_form"):
     features = st.text_area("3) 구현하려는 기능", placeholder="- 주간 리마인더 메일 발송\n- Google Form 응답 자동 집계\n- 승인/반려 워크플로", height=160)
     submitted = st.form_submit_button("가능성 평가 + 보완 제안 + PRD 생성", type="primary")
 
-# ========== 생성 로직 ==========
+# ================== 생성 로직 ==================
 if submitted:
     idea_block = f"제목: {title}\n설명: {desc}\n주 사용자: {users}\n기능:\n{features}"
     rc = rule_check(idea_block)
@@ -203,7 +212,7 @@ JSON만 출력하라.
         m = re.search(r"\{[\s\S]*\}", raw)
         data = json.loads(m.group(0)) if m else {"error":"JSON 파싱 실패", "raw":raw}
 
-    # ========== 결과 표시 ==========
+    # 결과 표시
     colA, colB = st.columns([1,2])
     with colA:
         score = float(data.get("feasibility", {}).get("score", rc["score"]))

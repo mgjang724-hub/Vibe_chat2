@@ -25,6 +25,7 @@ except ImportError:
 st.set_page_config(page_title="바이브코딩 GAS 튜터", page_icon="🧩", layout="wide")
 
 def _ensure_session_keys():
+    """세션 상태에 필요한 키가 없으면 초기화합니다."""
     if "corpus_text" not in st.session_state:
         st.session_state.corpus_text = ""
     if "is_admin" not in st.session_state:
@@ -55,6 +56,7 @@ else:
 
 # ================== 공통 유틸 ==================
 def _sha256(s: str) -> str:
+    """문자열을 SHA256으로 해시합니다."""
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 def _rule_check(text: str) -> Dict[str, Any]:
@@ -127,7 +129,7 @@ def _call_openai(system: str, user: str) -> str | None:
 
 # ================== 관리자 포털 노출 조건 ==================
 def _is_admin_link() -> bool:
-    """관리자 전용 링크인지 판별"""
+    """관리자 전용 링크(?admin=TOKEN)인지 판별"""
     try:
         qp = st.query_params or {}   # 최신 API
     except Exception:
@@ -169,11 +171,12 @@ st.markdown(
     """, unsafe_allow_html=True
 )
 
-# ================== 상수 프롬프트(SYSTEM) ==================
-SYSTEM = """역할: 당신은 'Google Apps Script 설계 조언가'다.
+# ================== 상수 프롬프트(SYSTEM) - (UX 개선) ==================
+SYSTEM = """역할: 당신은 'Google Apps Script 설계 조언가'이자, 오프라인 연수 강사의 조교(TA)다.
 목표:
 - 입력된 아이디어를 Apps Script 중심으로 재설계한다.
 - 불가능/부적합 요소는 대체 경로로 수정·보완한다.
+- ★★★ '강사 피드백 예시'가 제공되면, 반드시 해당 예시의 스타일과 결론을 1순위로 참고하여 사용자의 아이디어를 피드백하라. ★★★
 - 결과는 JSON 한 개만 출력한다. 한국어로 간결하고 구조화한다.
 출력 JSON 스키마:
 {
@@ -197,7 +200,7 @@ SYSTEM = """역할: 당신은 'Google Apps Script 설계 조언가'다.
 - WebApp(doGet/doPost)와 트리거가 필요하면 구체적으로 제안한다.
 - 예시 Apps Script 코드는 60줄 내 핵심만 제시한다.
 - 개인정보/권한/쿼터 리스크를 명시한다.
-- 제공된 '지식'이 있으면 우선 반영하되, 없으면 일반 지식으로 추론하고 '추정'임을 표시한다.
+- '강사 피드백 예시'가 없으면, 일반 지식으로 추론하되 '추정'임을 표시한다.
 """
 
 # ================== 헤더 및 사이드바 (가독성 개선) ==================
@@ -207,32 +210,32 @@ st.caption("입력: 제목·설명, 주 사용자, 구현 기능 → 출력: App
 with st.sidebar:
     st.subheader("🛠️ 상태 및 환경")
     st.divider() # 시각적 분리
-    # LLM 모델명을 뱃지 스타일로 출력
     st.markdown(f"**LLM 모델** : <span class='llm-badge'>{MODEL}</span>", unsafe_allow_html=True)
     st.write("API 키 감지:", "예" if OPENAI_API_KEY else "아니오")
-    st.write("지식 자산 길이:", f"{len(st.session_state.corpus_text):,} 자")
+    # (UX 개선) 레이블을 더 직관적으로 변경
+    st.write("학습된 강사 자료:", f"{len(st.session_state.corpus_text):,} 자")
     st.divider()
 
 
 # ================== 사용자 폼 ==================
-with st.expander("사용 방법", expanded=False):
+with st.expander("사용 방법 (연수생 가이드)", expanded=False):
     st.markdown(
-        "- 1) 제목·설명, 주 사용자, 기능을 입력.\n"
-        "- 2) 버튼 클릭 시 GAS 가능성 평가 + PRD 자동 생성.\n"
-        "- 3) 블루프린트와 PRD를 다운로드."
+        "- 1) 여러분이 구상한 아이디어의 **제목, 주 사용자, 핵심 기능**을 입력합니다.\n"
+        "- 2) [생성] 버튼을 누르면 AI 조교가 **Apps Script로 구현 가능한지 평가**하고 **PRD(제품 요구사항 정의서) 초안**을 만들어줍니다.\n"
+        "- 3) 생성된 '블루프린트'와 'PRD'를 다운로드하여 기획안을 구체화하세요."
     )
 
 with st.form("idea_form", clear_on_submit=False):
-    st.markdown("#### 아이디어 입력")
+    st.markdown("#### 1. 아이디어 입력")
     c1, c2 = st.columns([2,1])
     with c1:
-        title = st.text_input("제목", placeholder="예) 학급 공지·과제 리마인더 자동화")
+        title = st.text_input("제목 (필수)", placeholder="예) 학급 공지·과제 리마인더 자동화")
     with c2:
-        users = st.text_input("주 사용자", placeholder="예) 담임교사, 학생, 행정실")
+        users = st.text_input("주 사용자 (필수)", placeholder="예) 담임교사, 학생, 행정실")
 
-    desc = st.text_area("설명", placeholder="아이디어의 배경과 목적", height=120)
+    desc = st.text_area("설명", placeholder="이 아이디어를 기획한 배경과 목적을 알려주세요.", height=120)
     features = st.text_area(
-        "구현하려는 기능",
+        "구현하려는 기능 (필수)",
         placeholder="- 주간 리마인더 메일 발송\n- Google Form 응답 자동 집계\n- 승인/반려 워크플로",
         height=160
     )
@@ -240,9 +243,8 @@ with st.form("idea_form", clear_on_submit=False):
     # 버튼 배치: 핵심 액션 강조
     col_btn1, col_btn2 = st.columns([2,1]) # 생성 버튼에 더 많은 공간 할애
     with col_btn1:
-        do_generate = st.form_submit_button("가능성 평가 + 보완 제안 + PRD 생성", type="primary", use_container_width=True)
+        do_generate = st.form_submit_button("2. 가능성 평가 + 보완 제안 + PRD 생성", type="primary", use_container_width=True)
     with col_btn2:
-        # 리셋 버튼은 보조적인 역할
         do_reset = st.form_submit_button("입력 초기화", use_container_width=True)
 
 if do_reset:
@@ -250,8 +252,8 @@ if do_reset:
     st.rerun()
 
 if do_generate:
-    if not title or not users or not (desc or features):
-        st.warning("제목, 주 사용자, 설명/기능 중 최소 한 항목은 채워야 합니다.")
+    if not title or not users or not features: # 핵심 기능(features)을 필수로 변경
+        st.warning("제목, 주 사용자, 구현하려는 기능은 필수 입력 항목입니다.")
         st.stop()
 
     idea_block = f"제목: {title}\n설명: {desc}\n주 사용자: {users}\n기능:\n{features}"
@@ -271,6 +273,8 @@ if do_generate:
         st.divider() # 시각적 구분
 
         st.write("2/3 LLM 요청 전송")
+        
+        # (UX 개선) '강사 피드백'을 최우선으로 참고하도록 user_prompt 수정
         user_prompt = f"""
 [아이디어]
 {idea_block}
@@ -297,8 +301,8 @@ if do_generate:
     "Calendar":"https://www.googleapis.com/auth/calendar"
 }, ensure_ascii=False)}
 
-[지식(업로드 자산 스냅샷)]
-{(st.session_state.corpus_text[:8000] if st.session_state.corpus_text else "(지식 없음)")}
+[★★ 강사 피드백 예시 (1순위 참고) ★★]
+{(st.session_state.corpus_text[:8000] if st.session_state.corpus_text else "(참고할 강사 피드백 없음)")}
 JSON만 출력하라.
 """
         raw = _call_openai(SYSTEM, user_prompt)
@@ -327,6 +331,7 @@ JSON만 출력하라.
 # ================== 결과 렌더링 (디자인 강화) ==================
 data = st.session_state.last_result
 if data:
+    st.markdown("#### 3. AI 조교 피드백 결과")
     t1, t2, t3 = st.tabs(["요약 (Feasibility)", "설계·코드 (Blueprint)", "PRD"])
 
     with t1:
@@ -348,8 +353,9 @@ if data:
         st.divider()
         
         st.markdown("#### 보완·범위 조정 제안")
-        if data.get("adjustments"):
-             for it in data.get("adjustments", []):
+        adjustments = data.get("adjustments", [])
+        if adjustments:
+             for it in adjustments:
                 st.markdown(f"• **{it}**")
         else:
             st.info("특이 사항 없음. 현재 아이디어 그대로 진행하셔도 좋습니다.")
@@ -357,8 +363,12 @@ if data:
         st.divider()
         
         st.markdown("#### 다음 단계")
-        for idx, it in enumerate(data.get("next_steps", []), 1):
-            st.write(f"{idx}. {it}")
+        next_steps = data.get("next_steps", [])
+        if next_steps:
+            for idx, it in enumerate(next_steps, 1):
+                st.write(f"{idx}. {it}")
+        else:
+            st.write("다음 단계가 정의되지 않았습니다.")
 
 
     with t2:
@@ -372,14 +382,27 @@ if data:
         )
 
         st.markdown("#### 예시 Apps Script 스니펫")
-        for sn in data.get("gas_snippets", []):
-            # 코드 블록 마크다운 제거
-            code = sn.get("code","").replace("```js","").replace("```javascript","").replace("```","").strip()
-            st.markdown(f"**{sn.get('title','스니펫')}**")
-            st.code(code, language="javascript")
+        gas_snippets = data.get("gas_snippets", [])
+        if gas_snippets:
+            for sn in gas_snippets:
+                st.markdown(f"**{sn.get('title','스니펫')}**")
+                
+                # (버그 수정) 코드 블록 마크다운(```)을 제거하는 안정적인 로직
+                code_raw = sn.get("code", "")
+                # 정규식을 사용해 ```js, ```javascript, ```json, ``` 등과 \n```을 모두 제거
+                code = re.sub(r"^```[a-zA-Z]*\n", "", code_raw.strip())
+                code = re.sub(r"\n```$", "", code)
+                
+                st.code(code, language="javascript")
+        else:
+            st.info("제공된 코드 스니펫이 없습니다.")
 
         st.markdown("#### 리스크")
-        st.write(data.get("risks", []))
+        risks = data.get("risks", [])
+        if risks:
+            st.write(risks)
+        else:
+            st.write("특별히 식별된 리스크가 없습니다.")
 
     with t3:
         prd_md = data.get("prd","")
@@ -390,10 +413,10 @@ if data:
         else:
             st.info("PRD 생성 결과가 비어 있습니다.")
 
-# ================== 관리자 포털 ==================
+# ================== 관리자 포털 (UX 개선) ==================
 if _is_admin_link():
     st.markdown("---")
-    st.markdown("##### 관리자 포털")
+    st.markdown("##### 👨‍🏫 관리자 포털") # 이모지 추가
     if not st.session_state.is_admin:
         with st.form("admin_login"):
             pwd = st.text_input("관리자 비밀번호", type="password")
@@ -407,14 +430,21 @@ if _is_admin_link():
                     st.error("인증 실패")
     else:
         st.success("관리자 모드")
-        st.caption("연수 원고·레퍼런스 자산 업로드")
+        st.caption("연수 원고·강사 피드백 자료 업로드 (AI 조교 학습용)")
         uploads = st.file_uploader("PDF/TXT/MD 업로드", type=["pdf","txt","md"], accept_multiple_files=True)
         if uploads:
             texts = []
             for up in uploads:
                 texts.append(_read_file_to_text(up))
             st.session_state.corpus_text = "\n\n".join(texts)
-            st.success(f"문서 {len(uploads)}개 로드 완료")
+            st.success(f"문서 {len(uploads)}개 로드 완료. (총 {len(st.session_state.corpus_text):,} 자)")
+            st.rerun() # 업로드 후 바로 새로고침하여 사이드바 및 미리보기에 반영
+
+        # (UX 개선) 현재 로드된 자료 미리보기
+        if st.session_state.corpus_text:
+            with st.expander("현재 로드된 강사 자료 미리보기 (앞 1000자)"):
+                st.text_area("", st.session_state.corpus_text[:1000] + "...", height=200, disabled=True, label_visibility="collapsed")
+        
         cols = st.columns([1,1,1])
         with cols[0]:
             if st.button("자산 초기화"):
